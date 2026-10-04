@@ -68,16 +68,18 @@ class _HomeFeedScreenState extends State<HomeFeedScreen> {
         title: const KusinaBrandMark(),
         actions: [
           IconButton(
-            icon: const Icon(Icons.logout_rounded),
-            tooltip: 'Logout',
+            icon: const Icon(Icons.search_rounded),
+            tooltip: 'Search recipes',
             onPressed: () async {
-              await Supabase.instance.client.auth.signOut();
-              if (context.mounted) {
-                Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
-                  MaterialPageRoute(builder: (context) => const LoginScreen()),
-                  (route) => false,
-                );
-              }
+              final recipe = await showSearch<RecipeEntity?>(
+                context: context,
+                delegate: _RecipeSearchDelegate(context.read<FeedCubit>().state.recipes),
+              );
+              if (recipe == null || !context.mounted) return;
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => RecipeDetailScreen(recipe: recipe)),
+              );
             },
           ),
         ],
@@ -170,6 +172,69 @@ class _HomeFeedScreenState extends State<HomeFeedScreen> {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _RecipeSearchDelegate extends SearchDelegate<RecipeEntity?> {
+  final List<RecipeEntity> recipes;
+
+  _RecipeSearchDelegate(this.recipes);
+
+  List<RecipeEntity> get _matches {
+    final search = query.trim().toLowerCase();
+    if (search.isEmpty) return recipes;
+    return recipes.where((recipe) {
+      final searchable = [
+        recipe.title,
+        recipe.authorName,
+        recipe.description,
+        recipe.region,
+        ...recipe.ingredients,
+        ...recipe.tags,
+      ].join(' ').toLowerCase();
+      return searchable.contains(search);
+    }).toList();
+  }
+
+  @override
+  String get searchFieldLabel => 'Search recipes, ingredients...';
+
+  @override
+  List<Widget>? buildActions(BuildContext context) => [
+        if (query.isNotEmpty)
+          IconButton(icon: const Icon(Icons.clear), tooltip: 'Clear search', onPressed: () => query = ''),
+      ];
+
+  @override
+  Widget? buildLeading(BuildContext context) => IconButton(
+        icon: const Icon(Icons.arrow_back),
+        tooltip: 'Back',
+        onPressed: () => close(context, null),
+      );
+
+  @override
+  Widget buildResults(BuildContext context) => _buildMatches(context);
+
+  @override
+  Widget buildSuggestions(BuildContext context) => _buildMatches(context);
+
+  Widget _buildMatches(BuildContext context) {
+    final matches = _matches;
+    if (matches.isEmpty) {
+      return const Center(child: Text('No matching recipes found.'));
+    }
+    return ListView.builder(
+      itemCount: matches.length,
+      itemBuilder: (context, index) {
+        final recipe = matches[index];
+        return ListTile(
+          leading: const Icon(Icons.restaurant_menu, color: AppColors.primaryTerracotta),
+          title: Text(recipe.title),
+          subtitle: Text('By ${recipe.authorName}'),
+          onTap: () => close(context, recipe),
+        );
+      },
     );
   }
 }
@@ -595,6 +660,8 @@ class _CommentsSheetState extends State<_CommentsSheet> {
   String? _replyToCommentId;
   String? _replyToName;
   bool _isSending = false;
+  final Map<String, String> _commentAvatarUrls = {};
+  final Set<String> _loadingCommentAvatarIds = {};
 
   @override
   void dispose() {
@@ -652,12 +719,115 @@ class _CommentsSheetState extends State<_CommentsSheet> {
     _commentFocusNode.requestFocus();
   }
 
+  Future<void> _loadCommentAvatars(List<Map<String, dynamic>> comments) async {
+    final missingIds = comments
+        .map((comment) => comment['user_id']?.toString())
+        .whereType<String>()
+        .where((id) => !_commentAvatarUrls.containsKey(id) && !_loadingCommentAvatarIds.contains(id))
+        .toSet()
+        .toList();
+    if (missingIds.isEmpty) return;
+
+    _loadingCommentAvatarIds.addAll(missingIds);
+    try {
+      final profiles = await Supabase.instance.client
+          .from('users')
+          .select('id, avatar_url')
+          .inFilter('id', missingIds);
+      for (final profile in profiles) {
+        _commentAvatarUrls[profile['id'].toString()] = (profile['avatar_url'] ?? '').toString();
+      }
+      for (final id in missingIds) {
+        _commentAvatarUrls.putIfAbsent(id, () => '');
+      }
+    } catch (_) {
+      for (final id in missingIds) {
+        _commentAvatarUrls.putIfAbsent(id, () => '');
+      }
+    } finally {
+      _loadingCommentAvatarIds.removeAll(missingIds);
+      if (mounted) setState(() {});
+    }
+  }
+
+  Future<void> _showCommentActions(String commentId, Offset globalPosition) async {
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    if (userId == null) return;
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    final position = RelativeRect.fromLTRB(
+      globalPosition.dx,
+      globalPosition.dy,
+      overlay.size.width - globalPosition.dx,
+      overlay.size.height - globalPosition.dy,
+    );
+
+    final shouldDelete = await showMenu<bool>(
+      context: context,
+      position: position,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      color: Colors.white,
+      elevation: 8,
+      items: const [
+        PopupMenuItem<bool>(
+          value: true,
+          height: 44,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.delete_outline, size: 19, color: AppColors.primaryTerracotta),
+              SizedBox(width: 9),
+              Text('Delete comment', style: TextStyle(color: AppColors.primaryTerracotta, fontWeight: FontWeight.w600)),
+            ],
+          ),
+        ),
+      ],
+    );
+    if (shouldDelete != true || !mounted) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete comment?'),
+        content: const Text('This will also delete any replies to this comment.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Delete', style: TextStyle(color: AppColors.primaryTerracotta)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    try {
+      await Supabase.instance.client
+          .from('interactions')
+          .delete()
+          .eq('id', commentId)
+          .eq('user_id', userId)
+          .eq('interaction_type', 'comment');
+      if (_replyToCommentId == commentId && mounted) {
+        setState(() {
+          _replyToCommentId = null;
+          _replyToName = null;
+        });
+      }
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not delete comment: $error')),
+      );
+    }
+  }
+
   Widget _buildComment(Map<String, dynamic> comment, String rootCommentId, {bool isReply = false}) {
     final commentId = comment['id'].toString();
     final userName = (comment['user_name'] ?? 'Home Cook').toString();
     final initial = userName.isEmpty ? 'H' : userName.substring(0, 1).toUpperCase();
     final text = (comment['comment_text'] ?? '').toString();
     final client = Supabase.instance.client;
+    final avatarUrl = _commentAvatarUrls[comment['user_id']?.toString()] ?? '';
 
     return Padding(
       padding: EdgeInsets.only(left: isReply ? 44 : 0, bottom: 12),
@@ -675,7 +845,8 @@ class _CommentsSheetState extends State<_CommentsSheet> {
             child: CircleAvatar(
               radius: 17,
               backgroundColor: AppColors.secondaryPandan,
-              child: Text(initial, style: const TextStyle(color: Colors.white, fontSize: 13)),
+              backgroundImage: avatarUrl.isNotEmpty ? NetworkImage(avatarUrl) : null,
+              child: avatarUrl.isEmpty ? Text(initial, style: const TextStyle(color: Colors.white, fontSize: 13)) : null,
             ),
           ),
           const SizedBox(width: 9),
@@ -683,20 +854,25 @@ class _CommentsSheetState extends State<_CommentsSheet> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: AppColors.backgroundCream,
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(userName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textDarkSlate)),
-                      const SizedBox(height: 3),
-                      Text(text, style: const TextStyle(color: AppColors.textDarkSlate, height: 1.3)),
-                    ],
+                GestureDetector(
+                  onLongPressStart: comment['user_id']?.toString() == client.auth.currentUser?.id
+                      ? (details) => _showCommentActions(commentId, details.globalPosition)
+                      : null,
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: AppColors.backgroundCream,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(userName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textDarkSlate)),
+                        const SizedBox(height: 3),
+                        Text(text, style: const TextStyle(color: AppColors.textDarkSlate, height: 1.3)),
+                      ],
+                    ),
                   ),
                 ),
                 Padding(
@@ -809,6 +985,7 @@ class _CommentsSheetState extends State<_CommentsSheet> {
                 }
 
                 final comments = snapshot.data ?? const <Map<String, dynamic>>[];
+                _loadCommentAvatars(comments);
                 final commentIds = comments.map((comment) => comment['id']).toSet();
                 final roots = comments.where((comment) {
                   final parentId = comment['parent_comment_id'];

@@ -161,6 +161,15 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
     }
   }
 
+  Future<void> _signOut() async {
+    await _client.auth.signOut();
+    if (!mounted) return;
+    Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const LoginScreen()),
+      (route) => false,
+    );
+  }
+
   Future<void> _removeAccountPhotos(User user) async {
     final posts = await _client
         .from('posts')
@@ -293,6 +302,12 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
                 ),
                 const SizedBox(height: 20),
                 const Divider(),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.logout_rounded),
+                  title: const Text('Log out'),
+                  onTap: _saving ? null : _signOut,
+                ),
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   leading: const Icon(Icons.delete_forever_outlined, color: AppColors.primaryTerracotta),
