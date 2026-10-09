@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -9,6 +10,7 @@ import '../auth/login_screen.dart';
 import '../recipe_detail/recipe_detail_screen.dart';
 import '../profile/public_profile_screen.dart';
 import '../../domain/entities/recipe_entity.dart';
+import '../main_navigation_screen.dart';
 import 'feed_cubit.dart';
 import 'widgets/saved_collections_sheet.dart';
 
@@ -21,6 +23,30 @@ class HomeFeedScreen extends StatefulWidget {
 
 class _HomeFeedScreenState extends State<HomeFeedScreen> {
   bool _isRefreshingSession = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Listen for tab changes and refresh when returning to home tab
+    navigationTabNotifier.addListener(_onTabChange);
+  }
+
+  @override
+  void dispose() {
+    navigationTabNotifier.removeListener(_onTabChange);
+    super.dispose();
+  }
+
+  void _onTabChange() {
+    // When switching to home tab (0), refresh the feed
+    if (navigationTabNotifier.value == 0) {
+      try {
+        context.read<FeedCubit>().refreshRecommendations();
+      } catch (e) {
+        debugPrint('Could not refresh feed on tab change: $e');
+      }
+    }
+  }
 
   Future<void> _retryFeed() async {
     setState(() => _isRefreshingSession = true);

@@ -11,6 +11,9 @@ import 'home_feed/home_feed_screen.dart';
 import 'post_recipe/post_recipe_screen.dart';
 import 'profile/profile_screen.dart';
 
+// Shared ValueNotifier for managing navigation tab changes
+final navigationTabNotifier = ValueNotifier<int>(0);
+
 class MainNavigationScreen extends StatefulWidget {
   const MainNavigationScreen({super.key});
 
@@ -31,6 +34,25 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     PostRecipeScreen(),
     ProfileScreen(),
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    // Listen to navigation changes from other screens
+    navigationTabNotifier.addListener(_handleTabChange);
+  }
+
+  void _handleTabChange() {
+    setState(() {
+      _currentIndex = navigationTabNotifier.value;
+    });
+  }
+
+  @override
+  void dispose() {
+    navigationTabNotifier.removeListener(_handleTabChange);
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -62,7 +84,10 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         ),
         bottomNavigationBar: NavigationBar(
           selectedIndex: _currentIndex,
-          onDestinationSelected: (index) => setState(() => _currentIndex = index),
+          onDestinationSelected: (index) {
+            navigationTabNotifier.value = index;
+            setState(() => _currentIndex = index);
+          },
           backgroundColor: AppColors.surfaceWhite,
           indicatorColor: AppColors.secondaryPandan.withOpacity(0.15),
           labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter/services.dart';
@@ -14,6 +15,8 @@ import '../../data/datasources/recipe_draft_local_datasource.dart';
 import '../../domain/entities/recipe_draft.dart';
 import '../../domain/repositories/recipe_repository.dart';
 import '../../domain/usecases/publish_recipe.dart';
+import '../home_feed/feed_cubit.dart';
+import '../main_navigation_screen.dart';
 
 class PostRecipeScreen extends StatefulWidget {
   const PostRecipeScreen({super.key});
@@ -436,13 +439,25 @@ class _PostRecipeScreenState extends State<PostRecipeScreen> with WidgetsBinding
       }
       if (mounted) {
         _resetForm();
+        
         if (showSuccess) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Recipe published successfully!'),
-            backgroundColor: AppColors.secondaryPandan,
-          ),
-        );
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Recipe published successfully!'),
+              backgroundColor: AppColors.secondaryPandan,
+            ),
+          );
+          
+          // First, try to refresh the feed
+          try {
+            context.read<FeedCubit>().refreshRecommendations();
+          } catch (e) {
+            // If FeedCubit is not accessible, still navigate
+            debugPrint('Could not refresh feed: $e');
+          }
+          
+          // Navigate to home feed tab immediately
+          navigationTabNotifier.value = 0; // Switch to Home tab
         }
       }
     } catch (error) {
